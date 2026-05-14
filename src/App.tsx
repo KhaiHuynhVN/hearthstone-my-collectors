@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
+import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
+import * as React from 'react';
 import { fetchCollectibleCards } from './api';
-import { CardTile } from './CardTile';
+import { CardGrid } from './CardGrid';
 import {
   CLASSES,
   classesOf,
@@ -15,6 +16,20 @@ import type { GameMode, FormatFilter, OwnedMap, RawCard } from './types';
 import { useLocalStorage } from './useLocalStorage';
 
 type Tab = 'all' | 'owned';
+
+/** Tiny isolated counter — only this component re-renders on owned change. */
+function OwnedCount({ render }: { render: (n: number) => React.ReactNode }) {
+  const owned = useSyncExternalStore(
+    ownedStore.subscribeSummary,
+    ownedStore.getAll,
+    ownedStore.getAll,
+  );
+  const n = useMemo(
+    () => Object.values(owned).reduce((s, v) => s + (v || 0), 0),
+    [owned],
+  );
+  return <>{render(n)}</>;
+}
 
 const COST_BUCKETS = [
   { label: '0', test: (n: number) => n === 0 },
@@ -66,16 +81,6 @@ function useDebounced<T>(value: T, delay: number): T {
   return v;
 }
 
-/** Subscribes to the summary channel only. Returns the (referentially fresh)
- *  owned map snapshot — used for total counter, owned-tab filtering, exports. */
-function useOwnedMap(): OwnedMap {
-  return useSyncExternalStore(
-    ownedStore.subscribeSummary,
-    ownedStore.getAll,
-    ownedStore.getAll,
-  );
-}
-
 export default function App() {
   const [cards, setCards] = useState<RawCard[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -89,7 +94,6 @@ export default function App() {
   const [cost, setCost] = useLocalStorage<string>('flt.cost', 'ALL');
   const [search, setSearch] = useLocalStorage<string>('flt.search', '');
 
-  const owned = useOwnedMap();
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
@@ -146,18 +150,7 @@ export default function App() {
     });
   }, [cards, gameMode, formatF, klass, cost, debouncedSearch]);
 
-  /** Owned-tab filter is a thin second pass on the already-filtered subset. */
-  const filtered = useMemo(() => {
-    if (tab !== 'owned') return baseFiltered;
-    return baseFiltered.filter((c) => (owned[String(c.dbfId)] ?? 0) > 0);
-  }, [baseFiltered, tab, owned]);
-
-  const totalOwned = useMemo(
-    () => Object.values(owned).reduce((s, v) => s + (v || 0), 0),
-    [owned],
-  );
-
-  const buildExportArray = useCallback(() => {
+  const buildExportArray = () => {
     if (!cards) return [];
     const map = ownedStore.getAll();
     return cards
@@ -192,7 +185,7 @@ export default function App() {
         isMiniSet: c.isMiniSet,
         quantity: map[String(c.dbfId)] ?? 0,
       }));
-  }, [cards]);
+  };
 
   const copyOwned = async () => {
     const arr = buildExportArray();
@@ -266,7 +259,7 @@ export default function App() {
       <div className="panel p-3 mb-4 flex flex-wrap items-center gap-3 justify-between">
         <div className="flex items-center gap-3 flex-wrap">
           <span className="pill bg-cyber-neon/10 text-cyber-neon border border-cyber-neon/40">
-            Owned cards: {totalOwned}
+            <OwnedCount render={(n) => <>Owned cards: {n}</>} />
           </span>
           <span className="pill bg-cyber-pink/10 text-cyber-pink border border-cyber-pink/40">
             {loading ? (
@@ -275,7 +268,7 @@ export default function App() {
                 Loading…
               </span>
             ) : (
-              <>Showing: {filtered.length}</>
+              <>Filtered: {baseFiltered.length}</>
             )}
           </span>
           {cards && (
@@ -285,18 +278,10 @@ export default function App() {
           )}
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          <button
-            className="btn"
-            onClick={copyOwned}
-            disabled={loading || totalOwned === 0}
-          >
+          <button className="btn" onClick={copyOwned} disabled={loading}>
             {copied ? '✓ Copied' : 'Copy Owned JSON'}
           </button>
-          <button
-            className="btn"
-            onClick={downloadJson}
-            disabled={loading || totalOwned === 0}
-          >
+          <button className="btn" onClick={downloadJson} disabled={loading}>
             Download
           </button>
           <label
@@ -315,11 +300,7 @@ export default function App() {
               }}
             />
           </label>
-          <button
-            className="btn-pink"
-            onClick={clearAll}
-            disabled={loading || totalOwned === 0}
-          >
+          <button className="btn-pink" onClick={clearAll} disabled={loading}>
             Clear
           </button>
         </div>
@@ -334,7 +315,11 @@ export default function App() {
             disabled={loading}
             className={`btn ${tab === t ? '!border-cyber-neon !text-cyber-neon shadow-neon' : ''}`}
           >
-            {t === 'all' ? 'All Cards' : `Owned (${totalOwned})`}
+            {t === 'all' ? (
+              'All Cards'
+            ) : (
+              <OwnedCount render={(n) => <>Owned ({n})</>} />
+            )}
           </button>
         ))}
       </div>
@@ -431,16 +416,13 @@ export default function App() {
       )}
 
       {cards && !loading && (
-        <div className="grid gap-3 grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
-          {filtered.map((c) => (
-            <CardTile key={c.id} card={c} />
-          ))}
-          {filtered.length === 0 && (
-            <div className="col-span-full panel p-8 text-center text-cyber-mute">
-              No cards match these filters.
-            </div>
-          )}
-        </div>
+        baseFiltered.length === 0 ? (
+          <div className="panel p-8 text-center text-cyber-mute">
+            No cards match these filters.
+          </div>
+        ) : (
+          <CardGrid cards={baseFiltered} tab={tab} />
+        )
       )}
 
       <footer className="mt-8 text-center text-xs text-cyber-mute">

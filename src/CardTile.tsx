@@ -1,4 +1,4 @@
-import { memo, useCallback, useState, useSyncExternalStore } from 'react';
+import { memo, useState, useSyncExternalStore } from 'react';
 import { cardImageUrl, cardTileUrl } from './api';
 import { CLASS_COLORS, RARITY_COLORS, classesOf, maxQty } from './cardUtils';
 import { ownedStore } from './ownedStore';
@@ -15,21 +15,22 @@ interface Props {
 function CardTileImpl({ card }: Props) {
   const dbfId = card.dbfId;
 
-  // Per-card subscription: only this tile re-renders when its qty changes.
-  const subscribe = useCallback(
-    (cb: () => void) => ownedStore.subscribeKey(dbfId, cb),
-    [dbfId],
-  );
-  const getSnapshot = useCallback(() => ownedStore.get(dbfId), [dbfId]);
+  const subscribe = (cb: () => void) => ownedStore.subscribeKey(dbfId, cb);
+  const getSnapshot = () => ownedStore.get(dbfId);
   const qty = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 
   const [imgOk, setImgOk] = useState(true);
   const cs = classesOf(card);
   const max = maxQty(card);
 
+  const handle = (delta: -1 | 1) => {
+    const cur = ownedStore.get(dbfId);
+    ownedStore.set(dbfId, Math.max(0, Math.min(max, cur + delta)));
+  };
+
   return (
     <div
-      className="cv-auto panel card-glow relative p-2 flex flex-col gap-2 transition-transform hover:-translate-y-0.5"
+      className="panel card-glow relative p-2 flex flex-col gap-2 transition-transform hover:-translate-y-0.5"
       style={{
         borderColor: qty > 0 ? '#00f0ff' : undefined,
         boxShadow:
@@ -98,14 +99,14 @@ function CardTileImpl({ card }: Props) {
           <button
             className="btn !px-2 !py-0.5 !text-xs"
             disabled={qty <= 0}
-            onClick={() => ownedStore.set(dbfId, Math.max(0, qty - 1))}
+            onClick={() => handle(-1)}
           >
             −
           </button>
           <button
             className="btn-pink !px-2 !py-0.5 !text-xs"
             disabled={qty >= max}
-            onClick={() => ownedStore.set(dbfId, Math.min(max, qty + 1))}
+            onClick={() => handle(1)}
           >
             +
           </button>
@@ -115,5 +116,4 @@ function CardTileImpl({ card }: Props) {
   );
 }
 
-/** Memo on card identity only — qty is read from the store. */
 export const CardTile = memo(CardTileImpl, (a, b) => a.card.dbfId === b.card.dbfId);
