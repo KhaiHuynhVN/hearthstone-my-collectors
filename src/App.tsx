@@ -156,17 +156,19 @@ export default function App() {
       .catch((e) => setError(String(e)));
   }, []);
 
-  // Load keyword glossary AFTER cards are loaded (so we know which mechanics
-  // actually appear) — non-blocking. Failure is silent: the export simply
-  // omits `keywordDefinitions` rather than break.
+  // Load keyword glossary AFTER cards are loaded — non-blocking. We pass the
+  // union of every `mechanics` and `referencedTags` value across all cards
+  // (referencedTags catches bold keywords mentioned but not active on the
+  // card itself, e.g. "Give a minion <b>Rush</b>"). Failure is silent.
   useEffect(() => {
     if (!cards) return;
     let cancelled = false;
-    const mechanics = new Set<string>();
+    const tags = new Set<string>();
     for (const c of cards) {
-      if (c.mechanics) for (const m of c.mechanics) mechanics.add(m);
+      if (c.mechanics) for (const m of c.mechanics) tags.add(m);
+      if (c.referencedTags) for (const t of c.referencedTags) tags.add(t);
     }
-    loadKeywordMap(mechanics).then((m) => {
+    loadKeywordMap(tags).then((m) => {
       if (!cancelled) setKeywordMap(m);
     });
     return () => {
@@ -189,65 +191,68 @@ export default function App() {
     });
   }, [index, gameMode, formatF, klass, cost, debouncedSearch]);
 
-  const buildExportArray = () => {
-    if (!cards) return [];
+  const buildExportPayload = () => {
+    if (!cards) return { cards: [], keywords: {} };
     const map = ownedStore.getAll();
-    return cards
-      .filter((c) => (map[String(c.dbfId)] ?? 0) > 0)
-      .map((c) => {
-        const mechanics = c.mechanics;
-        let keywordDefinitions: Record<string, string> | undefined;
-        if (mechanics && mechanics.length && Object.keys(keywordMap).length) {
-          const defs: Record<string, string> = {};
-          for (const m of mechanics) {
-            const def = keywordMap[m];
-            if (def) defs[m] = def;
-          }
-          if (Object.keys(defs).length) keywordDefinitions = defs;
-        }
-        return {
-          dbfId: c.dbfId,
-          id: c.id,
-          name: c.name,
-          cardClass: c.cardClass,
-          classes: c.classes,
-          multiClassGroup: c.multiClassGroup,
-          cost: c.cost,
-          attack: c.attack,
-          health: c.health,
-          durability: c.durability,
-          armor: c.armor,
-          type: c.type,
-          rarity: c.rarity,
-          race: c.race,
-          races: c.races,
-          spellSchool: c.spellSchool,
-          spellDamage: c.spellDamage,
-          overload: c.overload,
-          runeCost: c.runeCost,
-          set: c.set,
-          format: isStandard(c) ? 'STANDARD' : isWild(c) ? 'WILD' : 'OTHER',
-          mechanics,
-          keywordDefinitions,
-          referencedTags: c.referencedTags,
-          text: c.text,
-          collectionText: c.collectionText,
-          elite: c.elite,
-          isMiniSet: c.isMiniSet,
-          quantity: map[String(c.dbfId)] ?? 0,
-        };
-      });
+    const ownedCards = cards.filter((c) => (map[String(c.dbfId)] ?? 0) > 0);
+
+    const exportCards = ownedCards.map((c) => ({
+      dbfId: c.dbfId,
+      id: c.id,
+      name: c.name,
+      cardClass: c.cardClass,
+      classes: c.classes,
+      multiClassGroup: c.multiClassGroup,
+      cost: c.cost,
+      attack: c.attack,
+      health: c.health,
+      durability: c.durability,
+      armor: c.armor,
+      type: c.type,
+      rarity: c.rarity,
+      race: c.race,
+      races: c.races,
+      spellSchool: c.spellSchool,
+      spellDamage: c.spellDamage,
+      overload: c.overload,
+      runeCost: c.runeCost,
+      set: c.set,
+      format: isStandard(c) ? 'STANDARD' : isWild(c) ? 'WILD' : 'OTHER',
+      mechanics: c.mechanics,
+      referencedTags: c.referencedTags,
+      text: c.text,
+      collectionText: c.collectionText,
+      elite: c.elite,
+      isMiniSet: c.isMiniSet,
+      quantity: map[String(c.dbfId)] ?? 0,
+    }));
+
+    // Top-level keyword glossary — only entries that owned cards actually use,
+    // looked up once instead of duplicated on each card. Saves tokens when
+    // the AI consumes the JSON.
+    const usedTags = new Set<string>();
+    for (const c of ownedCards) {
+      if (c.mechanics) for (const m of c.mechanics) usedTags.add(m);
+      if (c.referencedTags) for (const t of c.referencedTags) usedTags.add(t);
+    }
+    const keywords: Record<string, string> = {};
+    for (const t of usedTags) {
+      const def = keywordMap[t];
+      if (def) keywords[t] = def;
+    }
+
+    return { cards: exportCards, keywords };
   };
 
   const copyOwned = async () => {
-    const arr = buildExportArray();
+    const payload = buildExportPayload();
     try {
-      await navigator.clipboard.writeText(JSON.stringify(arr, null, 2));
+      await navigator.clipboard.writeText(JSON.stringify(payload, null, 2));
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
     } catch {
       const ta = document.createElement('textarea');
-      ta.value = JSON.stringify(arr, null, 2);
+      ta.value = JSON.stringify(payload, null, 2);
       document.body.appendChild(ta);
       ta.select();
       document.execCommand('copy');
@@ -258,8 +263,8 @@ export default function App() {
   };
 
   const downloadJson = () => {
-    const arr = buildExportArray();
-    const blob = new Blob([JSON.stringify(arr, null, 2)], { type: 'application/json' });
+    const payload = buildExportPayload();
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
