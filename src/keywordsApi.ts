@@ -130,46 +130,86 @@ function resolveTitle(
   return t;
 }
 
+/** Run async fn over each item with bounded concurrency to avoid burst-rate-limits. */
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const out: R[] = new Array(items.length);
+  let i = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (true) {
+      const idx = i++;
+      if (idx >= items.length) return;
+      out[idx] = await fn(items[idx]);
+    }
+  });
+  await Promise.all(workers);
+  return out;
+}
+
+/** Module-level in-flight cache: concurrent callers (e.g. React StrictMode
+ *  double-invoke in dev) share one fetch instead of stampeding the wiki. */
+let inflight: Promise<KeywordMap> | null = null;
+let inflightKey: string | null = null;
+
 /**
  * Main entry. Pass the set of tag enum values you want defined (mechanics +
  * referencedTags etc.). Returns a definition for every tag the wiki has a
  * page for. Tags with no page are silently omitted.
  */
 export async function loadKeywordMap(tags: Iterable<string>): Promise<KeywordMap> {
-  const wanted = [...new Set(tags)];
+  const wanted = [...new Set(tags)].sort();
   if (wanted.length === 0) return {};
 
-  try {
-    // 1. Search in parallel — CirrusSearch handles plurals/redirects/tense.
-    const searchResults = await Promise.all(
-      wanted.map(async (mechanic) => {
+  const key = wanted.join('|');
+  if (inflight && inflightKey === key) return inflight;
+
+  inflightKey = key;
+  inflight = (async () => {
+    try {
+      // 1. Search with bounded concurrency — CirrusSearch handles
+      //    plurals/redirects/tense, but bursting 60+ requests trips the
+      //    wiki's per-IP rate limit (HTTP 429). 8 at a time is comfortable.
+      const searchResults = await mapWithConcurrency(wanted, 8, async (mechanic) => {
         const title = await wikiSearchTop(mechanicToQuery(mechanic));
         return { mechanic, title };
-      }),
-    );
+      });
 
-    // 2. Collect unique top hit titles.
-    const titlesByMechanic = new Map<string, string>();
-    const uniqueTitles: string[] = [];
-    for (const { mechanic, title } of searchResults) {
-      if (!title) continue;
-      titlesByMechanic.set(mechanic, title);
-      if (!uniqueTitles.includes(title)) uniqueTitles.push(title);
+      const titlesByMechanic = new Map<string, string>();
+      const uniqueTitles: string[] = [];
+      for (const { mechanic, title } of searchResults) {
+        if (!title) continue;
+        titlesByMechanic.set(mechanic, title);
+        if (!uniqueTitles.includes(title)) uniqueTitles.push(title);
+      }
+
+      if (uniqueTitles.length === 0) return {};
+
+      const { map, redirects, normalized } = await fetchExtractsByTitles(uniqueTitles);
+
+      const result: KeywordMap = {};
+      for (const [mechanic, title] of titlesByMechanic) {
+        const resolved = resolveTitle(title, normalized, redirects);
+        const ex = map.get(resolved);
+        if (ex) result[mechanic] = cleanExtract(ex);
+      }
+      return result;
+    } catch {
+      return {};
+    } finally {
+      // Hold the result for the rest of the session; clear only if it failed
+      // (empty map) so a future retry can succeed.
+      // Note: we keep a non-empty result indefinitely to avoid hammering the wiki.
     }
+  })();
 
-    if (uniqueTitles.length === 0) return {};
-
-    // 3. Batch fetch extracts.
-    const { map, redirects, normalized } = await fetchExtractsByTitles(uniqueTitles);
-
-    const result: KeywordMap = {};
-    for (const [mechanic, title] of titlesByMechanic) {
-      const resolved = resolveTitle(title, normalized, redirects);
-      const ex = map.get(resolved);
-      if (ex) result[mechanic] = cleanExtract(ex);
-    }
-    return result;
-  } catch {
-    return {};
+  const result = await inflight;
+  if (Object.keys(result).length === 0) {
+    // Allow retry on next call if we got nothing.
+    inflight = null;
+    inflightKey = null;
   }
+  return result;
 }
