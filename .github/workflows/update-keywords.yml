@@ -1,0 +1,38 @@
+name: Update keywords glossary
+
+on:
+  schedule:
+    # Every 6 hours, on the hour.
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update-keywords
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Generate public/keywords.json
+        run: node scripts/update-keywords.mjs
+
+      - name: Commit & push if changed
+        run: |
+          if git diff --quiet -- public/keywords.json; then
+            echo "No keyword changes."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add public/keywords.json
+          git commit -m "chore(keywords): refresh glossary [skip ci]"
+          git push
