@@ -100,3 +100,59 @@ export function classesOf(c: RawCard): string[] {
 export function maxQty(c: RawCard): 1 | 2 {
   return c.rarity === 'LEGENDARY' ? 1 : 2;
 }
+
+/** Set priority for picking a canonical reprint when the same card exists in
+ *  multiple sets (e.g. CORE + LEGACY). Higher = preferred. */
+function setRank(set?: string): number {
+  if (!set) return 0;
+  if (set === 'CORE') return 100;
+  if (set === 'LEGACY') return 80;
+  if (set === 'EXPERT1') return 70;
+  return 10; // expansion sets — keep their own copy
+}
+
+/**
+ * Hearthstone treats reprints of the same card across sets as a single deck
+ * entry (max 2 copies total, regardless of how many printed versions exist).
+ * The dataset, however, lists each printed version as its own entry.
+ *
+ * We deduplicate by (name, primary class). Within a duplicate group we keep
+ * the canonical printing (prefer CORE, then LEGACY/EXPERT1, then expansions
+ * picked deterministically by lowest dbfId).
+ *
+ * Returns:
+ *   canonical: deduped card list to render.
+ *   aliasOf:  map of every redundant dbfId -> canonical dbfId, used to migrate
+ *             previously stored owned quantities.
+ */
+export function dedupeReprints(cards: RawCard[]): {
+  canonical: RawCard[];
+  aliasOf: Record<number, number>;
+} {
+  const groups = new Map<string, RawCard[]>();
+  for (const c of cards) {
+    const cls = (c.cardClass ?? (c.classes && c.classes[0]) ?? 'NEUTRAL') as string;
+    const key = `${cls}::${c.name}`;
+    const arr = groups.get(key);
+    if (arr) arr.push(c);
+    else groups.set(key, [c]);
+  }
+
+  const canonical: RawCard[] = [];
+  const aliasOf: Record<number, number> = {};
+  for (const arr of groups.values()) {
+    if (arr.length === 1) {
+      canonical.push(arr[0]);
+      continue;
+    }
+    const sorted = [...arr].sort(
+      (a, b) => setRank(b.set) - setRank(a.set) || a.dbfId - b.dbfId,
+    );
+    const winner = sorted[0];
+    canonical.push(winner);
+    for (const dup of sorted.slice(1)) {
+      aliasOf[dup.dbfId] = winner.dbfId;
+    }
+  }
+  return { canonical, aliasOf };
+}

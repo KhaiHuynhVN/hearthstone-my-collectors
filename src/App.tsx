@@ -5,6 +5,7 @@ import {
   CLASS_COLORS,
   RARITY_COLORS,
   classesOf,
+  dedupeReprints,
   isBattlegrounds,
   isConstructed,
   isMercenaries,
@@ -173,12 +174,32 @@ export default function App() {
 
   useEffect(() => {
     fetchCollectibleCards()
-      .then((cs) =>
+      .then((raw) => {
+        const { canonical, aliasOf } = dedupeReprints(raw);
+        // Migrate localStorage entries pointing at deduped reprints onto canonical.
+        setOwned((prev) => {
+          let mutated = false;
+          const next: OwnedMap = {};
+          for (const [dbfStr, qty] of Object.entries(prev)) {
+            const dbf = Number(dbfStr);
+            const target = aliasOf[dbf] ?? dbf;
+            if (target !== dbf) mutated = true;
+            const cap = canonical.find((c) => c.dbfId === target);
+            const max = cap ? maxQty(cap) : 2;
+            const merged = Math.min(max, (next[String(target)] ?? 0) + qty);
+            next[String(target)] = merged;
+          }
+          return mutated ? next : prev;
+        });
         setCards(
-          [...cs].sort((a, b) => (a.cost ?? 0) - (b.cost ?? 0) || a.name.localeCompare(b.name)),
-        ),
-      )
+          [...canonical].sort(
+            (a, b) =>
+              (a.cost ?? 0) - (b.cost ?? 0) || a.name.localeCompare(b.name),
+          ),
+        );
+      })
       .catch((e) => setError(String(e)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const filtered = useMemo(() => {
