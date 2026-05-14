@@ -123,6 +123,31 @@ function SkeletonCard() {
   );
 }
 
+/** Floating scroll-to-top button. Appears after the user scrolls past 400px. */
+function ScrollToTop() {
+  const [visible, setVisible] = useState(false);
+  useEffect(() => {
+    const onScroll = () => setVisible(window.scrollY > 400);
+    onScroll();
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => window.removeEventListener('scroll', onScroll);
+  }, []);
+  if (!visible) return null;
+  return (
+    <button
+      onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
+      aria-label="Scroll to top"
+      className="fixed bottom-6 right-6 z-50 h-12 w-12 rounded-full panel
+                 flex items-center justify-center text-cyber-neon text-xl
+                 border-cyber-neon/60 hover:border-cyber-neon
+                 shadow-neon hover:scale-110 transition-all"
+      style={{ backdropFilter: 'blur(6px)' }}
+    >
+      ↑
+    </button>
+  );
+}
+
 /** Debounce a value by `delay` ms (no extra deps). */
 function useDebounced<T>(value: T, delay: number): T {
   const [v, setV] = useState(value);
@@ -464,6 +489,8 @@ export default function App() {
           <CardGrid cards={baseFiltered} tab={tab} />
         )
       )}
+
+      <ScrollToTop />
 
       <footer className="mt-8 text-center text-xs text-cyber-mute">
         Card data &copy; Blizzard Entertainment · Sourced from{' '}
