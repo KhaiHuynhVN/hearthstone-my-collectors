@@ -22,7 +22,9 @@ import { fileURLToPath } from 'node:url';
 
 const HSJSON_URL = 'https://api.hearthstonejson.com/v1/latest/enUS/cards.collectible.json';
 const WIKI_ENDPOINT = 'https://hearthstone.wiki.gg/api.php';
-const TITLE_BATCH = 50;
+// Anonymous users may request up to 20 extracts per query (`exlimit=max`).
+// Batching more titles than that silently drops the extras' extracts.
+const TITLE_BATCH = 20;
 const SEARCH_CONCURRENCY = 6;
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
