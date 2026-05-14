@@ -36,6 +36,7 @@ export interface RawCard {
   dbfId: number;
   name: string;
   text?: string;
+  collectionText?: string;
   flavor?: string;
   cardClass?: CardClass;
   classes?: CardClass[];
@@ -54,10 +55,26 @@ export interface RawCard {
   race?: string;
   races?: string[];
   spellSchool?: string;
+  spellDamage?: number;
+  overload?: number;
   artist?: string;
   faction?: string;
   elite?: boolean;
   howToEarn?: string;
+  howToEarnGolden?: string;
+  isMiniSet?: boolean;
+  countAsCopyOfDbfId?: number;
+  questReward?: string;
+  hasDiamondSkin?: boolean;
+  hideCost?: boolean;
+  hideStats?: boolean;
+  targetingArrowText?: string;
+  /** Death Knight rune requirement. */
+  runeCost?: { blood: number; frost: number; unholy: number };
+  /** Battlegrounds tier (1-7). Presence implies BG card. */
+  techLevel?: number;
+  battlegroundsAssociatedRaces?: string[];
+  battlegroundsPremiumDbfId?: number;
 }
 
 export type GameMode = 'CONSTRUCTED' | 'BATTLEGROUNDS' | 'MERCENARIES' | 'ALL';

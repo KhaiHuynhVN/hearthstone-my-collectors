@@ -6,6 +6,7 @@ import {
   RARITY_COLORS,
   classesOf,
   isBattlegrounds,
+  isConstructed,
   isMercenaries,
   isStandard,
   isWild,
@@ -187,12 +188,13 @@ export default function App() {
     return cards.filter((c) => {
       // Game mode
       if (gameMode === 'CONSTRUCTED') {
-        if (isBattlegrounds(c) || isMercenaries(c)) return false;
+        if (!isConstructed(c)) return false;
       } else if (gameMode === 'BATTLEGROUNDS') {
         if (!isBattlegrounds(c)) return false;
       } else if (gameMode === 'MERCENARIES') {
         if (!isMercenaries(c)) return false;
       }
+      // ALL: no filtering by mode
 
       // Format (only meaningful for Constructed)
       if (gameMode === 'CONSTRUCTED' && formatF !== 'BOTH') {
@@ -251,6 +253,7 @@ export default function App() {
         name: c.name,
         cardClass: c.cardClass,
         classes: c.classes,
+        multiClassGroup: c.multiClassGroup,
         cost: c.cost,
         attack: c.attack,
         health: c.health,
@@ -261,12 +264,17 @@ export default function App() {
         race: c.race,
         races: c.races,
         spellSchool: c.spellSchool,
+        spellDamage: c.spellDamage,
+        overload: c.overload,
+        runeCost: c.runeCost,
         set: c.set,
         format: isStandard(c) ? 'STANDARD' : isWild(c) ? 'WILD' : 'OTHER',
         mechanics: c.mechanics,
         referencedTags: c.referencedTags,
         text: c.text,
+        collectionText: c.collectionText,
         elite: c.elite,
+        isMiniSet: c.isMiniSet,
         quantity: owned[String(c.dbfId)] ?? 0,
       }));
   };

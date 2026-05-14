@@ -1,36 +1,48 @@
 import type { RawCard } from './types';
 
-/** Sets that are part of Standard rotation as of late 2025 / mid-2026.
- *  Anything else collectible & non-BG/non-Mercs => Wild. */
+/** Sets currently in Standard rotation (as observed from HearthstoneJSON late 2025 / 2026).
+ *  CORE is always Standard. The newest 2-year window of expansions is Standard. */
 export const STANDARD_SETS: ReadonlySet<string> = new Set([
   'CORE',
-  // Year of the Pegasus (2024) — still in Standard until next rotation
+  // Year of the Pegasus (2024)
   'WHIZBANGS_WORKSHOP',
-  'PERILS_IN_PARADISE',
-  'THE_GREAT_DARK_BEYOND',
+  'ISLAND_VACATION', // Perils in Paradise
+  'SPACE',           // The Great Dark Beyond
   // Year of the Raptor (2025)
   'EMERALD_DREAM',
-  'INTO_THE_EMERALD_DREAM',
-  'THE_LOST_CITY_OF_UNGORO',
+  'THE_LOST_CITY',
+  'TIME_TRAVEL',
 ]);
 
-/** Battlegrounds sets — exclude from Constructed */
-const BG_SET_PATTERNS = [/^BATTLEGROUNDS/];
-/** Mercenaries sets */
-const MERC_SET_PATTERNS = [/^LETTUCE/];
+/** Sets that are not playable in any normal mode and should be hidden by default. */
+const NON_PLAYABLE_SETS: ReadonlySet<string> = new Set([
+  'HERO_SKINS',
+  'VANILLA',
+  'CHEAT', // safety
+]);
 
+/** Battlegrounds: trust dedicated fields, fall back to set-name prefix. */
 export function isBattlegrounds(c: RawCard): boolean {
-  if (!c.set) return false;
-  return BG_SET_PATTERNS.some((p) => p.test(c.set!));
+  if (c.techLevel != null) return true;
+  if (c.battlegroundsAssociatedRaces && c.battlegroundsAssociatedRaces.length) return true;
+  if (c.battlegroundsPremiumDbfId != null) return true;
+  if (c.set && /^BATTLEGROUNDS/.test(c.set)) return true;
+  return false;
 }
 
+/** Mercenaries: set names start with LETTUCE. */
 export function isMercenaries(c: RawCard): boolean {
+  return !!c.set && /^LETTUCE/.test(c.set);
+}
+
+export function isPlaceholder(c: RawCard): boolean {
   if (!c.set) return false;
-  return MERC_SET_PATTERNS.some((p) => p.test(c.set!));
+  if (c.set.startsWith('PLACEHOLDER_')) return true;
+  return NON_PLAYABLE_SETS.has(c.set);
 }
 
 export function isConstructed(c: RawCard): boolean {
-  return !isBattlegrounds(c) && !isMercenaries(c);
+  return !isBattlegrounds(c) && !isMercenaries(c) && !isPlaceholder(c);
 }
 
 export function isStandard(c: RawCard): boolean {
