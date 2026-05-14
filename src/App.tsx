@@ -97,7 +97,9 @@ export default function App() {
 
   const debouncedSearch = useDebounced(search, 250);
 
-  const filtered = useMemo(() => {
+  /** Base filter — does NOT depend on `owned`, so toggling +/- doesn't
+   *  re-scan all 7935 cards. */
+  const baseFiltered = useMemo(() => {
     if (!cards) return [];
     const term = debouncedSearch.trim().toLowerCase();
 
@@ -136,14 +138,16 @@ export default function App() {
         if (!hay.includes(term)) return false;
       }
 
-      // Owned tab
-      if (tab === 'owned') {
-        if ((owned[String(c.dbfId)] ?? 0) <= 0) return false;
-      }
-
       return true;
     });
-  }, [cards, gameMode, formatF, klass, cost, debouncedSearch, tab, owned]);
+  }, [cards, gameMode, formatF, klass, cost, debouncedSearch]);
+
+  /** Apply the "Owned" tab filter as a thin second pass on the already-filtered
+   *  subset. Owned changes only re-run this short loop, not the full 7935. */
+  const filtered = useMemo(() => {
+    if (tab !== 'owned') return baseFiltered;
+    return baseFiltered.filter((c) => (owned[String(c.dbfId)] ?? 0) > 0);
+  }, [baseFiltered, tab, owned]);
 
   const totalOwned = useMemo(
     () => Object.values(owned).reduce((s, v) => s + (v || 0), 0),
