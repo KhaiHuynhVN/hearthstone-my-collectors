@@ -31,6 +31,35 @@ function classColor(cs: string[]): string {
   return CLASS_COLORS[cs[0]] ?? '#9aa0b4';
 }
 
+function SkeletonCard() {
+  return (
+    <div className="panel p-2 flex flex-col gap-2 animate-pulse">
+      <div className="aspect-[3/4] rounded bg-gradient-to-br from-cyber-panel2 to-cyber-bg/50 relative overflow-hidden">
+        <div
+          className="absolute inset-0 -translate-x-full animate-[shimmer_1.6s_infinite]"
+          style={{
+            background:
+              'linear-gradient(90deg, transparent, rgba(0,240,255,0.08), transparent)',
+          }}
+        />
+        <span className="absolute top-1 left-1 h-4 w-6 rounded-full bg-cyber-border/60" />
+        <span className="absolute top-1 right-1 h-4 w-4 rounded-full bg-cyber-border/60" />
+      </div>
+      <div className="space-y-1">
+        <div className="h-3 w-3/4 rounded bg-cyber-border/60" />
+        <div className="h-2.5 w-1/2 rounded bg-cyber-border/40" />
+      </div>
+      <div className="flex items-center justify-between pt-1">
+        <div className="h-2.5 w-8 rounded bg-cyber-border/40" />
+        <div className="flex gap-1">
+          <div className="h-5 w-7 rounded bg-cyber-border/40" />
+          <div className="h-5 w-7 rounded bg-cyber-border/40" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function CardTile({
   card,
   qty,
@@ -128,6 +157,7 @@ export default function App() {
   const [cards, setCards] = useState<RawCard[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>('all');
+  const loading = !cards && !error;
 
   // Filters
   const [gameMode, setGameMode] = useLocalStorage<GameMode>('flt.mode', 'CONSTRUCTED');
@@ -317,7 +347,14 @@ export default function App() {
             Owned cards: {totalOwned}
           </span>
           <span className="pill bg-cyber-pink/10 text-cyber-pink border border-cyber-pink/40">
-            Showing: {filtered.length}
+            {loading ? (
+              <span className="inline-flex items-center gap-1.5">
+                <span className="inline-block h-2 w-2 rounded-full bg-cyber-pink animate-ping" />
+                Loading…
+              </span>
+            ) : (
+              <>Showing: {filtered.length}</>
+            )}
           </span>
           {cards && (
             <span className="pill bg-cyber-purple/10 text-cyber-purple border border-cyber-purple/40">
@@ -326,18 +363,29 @@ export default function App() {
           )}
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          <button className="btn" onClick={copyOwned} disabled={totalOwned === 0}>
+          <button
+            className="btn"
+            onClick={copyOwned}
+            disabled={loading || totalOwned === 0}
+          >
             {copied ? '✓ Copied' : 'Copy Owned JSON'}
           </button>
-          <button className="btn" onClick={downloadJson} disabled={totalOwned === 0}>
+          <button
+            className="btn"
+            onClick={downloadJson}
+            disabled={loading || totalOwned === 0}
+          >
             Download
           </button>
-          <label className="btn cursor-pointer">
+          <label
+            className={`btn cursor-pointer ${loading ? 'opacity-50 pointer-events-none' : ''}`}
+          >
             Import
             <input
               type="file"
               accept="application/json,.json"
               className="hidden"
+              disabled={loading}
               onChange={(e) => {
                 const f = e.target.files?.[0];
                 if (f) void importJson(f);
@@ -345,7 +393,11 @@ export default function App() {
               }}
             />
           </label>
-          <button className="btn-pink" onClick={clearAll} disabled={totalOwned === 0}>
+          <button
+            className="btn-pink"
+            onClick={clearAll}
+            disabled={loading || totalOwned === 0}
+          >
             Clear
           </button>
         </div>
@@ -357,6 +409,7 @@ export default function App() {
           <button
             key={t}
             onClick={() => setTab(t)}
+            disabled={loading}
             className={`btn ${tab === t ? '!border-cyber-neon !text-cyber-neon shadow-neon' : ''}`}
           >
             {t === 'all' ? 'All Cards' : `Owned (${totalOwned})`}
@@ -365,7 +418,12 @@ export default function App() {
       </div>
 
       {/* Filters */}
-      <div className="panel p-3 mb-4 grid grid-cols-1 md:grid-cols-5 gap-3">
+      <fieldset
+        disabled={loading}
+        className={`panel p-3 mb-4 grid grid-cols-1 md:grid-cols-5 gap-3 ${
+          loading ? 'opacity-60 cursor-not-allowed' : ''
+        }`}
+      >
         <label className="flex flex-col gap-1 text-xs uppercase text-cyber-mute tracking-wider">
           Game mode
           <select
@@ -386,7 +444,7 @@ export default function App() {
             className="select"
             value={formatF}
             onChange={(e) => setFormatF(e.target.value as FormatFilter)}
-            disabled={gameMode !== 'CONSTRUCTED'}
+            disabled={loading || gameMode !== 'CONSTRUCTED'}
           >
             <option value="BOTH">Standard + Wild</option>
             <option value="STANDARD">Standard</option>
@@ -431,19 +489,27 @@ export default function App() {
             onChange={(e) => setSearch(e.target.value)}
           />
         </label>
-      </div>
+      </fieldset>
 
       {/* Body */}
       {error && (
         <div className="panel p-4 text-cyber-pink">Failed to load cards: {error}</div>
       )}
-      {!cards && !error && (
-        <div className="panel p-8 text-center text-cyber-mute animate-glow">
-          Loading card database from HearthstoneJSON…
-        </div>
+
+      {loading && !error && (
+        <>
+          <div className="mb-3 text-center text-xs uppercase tracking-widest text-cyber-neon animate-glow">
+            ▰▰▱▱ Syncing card database from HearthstoneJSON ▱▱▰▰
+          </div>
+          <div className="grid gap-3 grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
+            {Array.from({ length: 18 }).map((_, i) => (
+              <SkeletonCard key={i} />
+            ))}
+          </div>
+        </>
       )}
 
-      {cards && (
+      {cards && !loading && (
         <div className="grid gap-3 grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
           {filtered.map((c) => (
             <CardTile
