@@ -2,8 +2,8 @@
  * Fetches Hearthstone keyword definitions from the community wiki:
  *   https://hearthstone.wiki.gg/api.php
  *
- * Free, no auth, CORS open via `origin=*`. Cached in localStorage with a
- * 7-day TTL — call site doesn't have to think about freshness.
+ * Free, no auth, CORS open via `origin=*`. NO local caching — always fetch
+ * fresh so the user gets the latest definitions on every page load.
  *
  * Two-phase fetch (a MediaWiki quirk):
  *   1) list=categorymembers — get keyword page titles.
@@ -12,20 +12,12 @@
  *       only one extract per request even with `exlimit=max`.)
  */
 
-const CACHE_KEY = 'kw.cache.v3';
-const CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
-
 const WIKI_ENDPOINT = 'https://hearthstone.wiki.gg/api.php';
 
 /** Anonymous users may request at most 50 titles per query. */
 const TITLE_BATCH = 50;
 
 export type KeywordMap = Record<string, string>;
-
-interface CacheShape {
-  fetchedAt: number;
-  data: KeywordMap;
-}
 
 interface MwTitlePage {
   title: string;
@@ -36,9 +28,18 @@ interface MwExtractPage {
   extract?: string;
 }
 
-/** Convert wiki page title ("Divine Shield") to mechanics enum ("DIVINE_SHIELD"). */
+/**
+ * Convert wiki page title to mechanics enum form. Mechanics from
+ * HearthstoneJSON look like "BATTLECRY", "DIVINE_SHIELD", "CHOOSE_ONE",
+ * "QUEST". Wiki titles can be "Battlecry", "Divine Shield",
+ * "Quest (ability)", "Mega-Windfury".
+ */
 function titleToMechanicKey(title: string): string {
-  return title.trim().toUpperCase().replace(/[\s-]+/g, '_');
+  return title
+    .replace(/\s*\([^)]*\)\s*/g, ' ') // strip "(ability)" disambiguators
+    .trim()
+    .toUpperCase()
+    .replace(/[\s-]+/g, '_');
 }
 
 /** Trim wiki extract to a tight one-paragraph description. */
@@ -68,8 +69,8 @@ async function fetchKeywordTitles(): Promise<string[]> {
       url.searchParams.set('action', 'query');
       url.searchParams.set('list', 'categorymembers');
       url.searchParams.set('cmtitle', category);
-      url.searchParams.set('cmlimit', 'max'); // 500 for anon
-      url.searchParams.set('cmnamespace', '0'); // main pages only
+      url.searchParams.set('cmlimit', 'max');
+      url.searchParams.set('cmnamespace', '0');
       url.searchParams.set('format', 'json');
       url.searchParams.set('formatversion', '2');
       url.searchParams.set('origin', '*');
@@ -126,46 +127,15 @@ async function fetchExtracts(titles: string[]): Promise<KeywordMap> {
   return map;
 }
 
-function readCache(): KeywordMap | null {
-  try {
-    const raw = localStorage.getItem(CACHE_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as CacheShape;
-    if (
-      !parsed ||
-      typeof parsed.fetchedAt !== 'number' ||
-      Date.now() - parsed.fetchedAt > CACHE_TTL_MS
-    ) {
-      return null;
-    }
-    return parsed.data;
-  } catch {
-    return null;
-  }
-}
-
-function writeCache(data: KeywordMap): void {
-  try {
-    const payload: CacheShape = { fetchedAt: Date.now(), data };
-    localStorage.setItem(CACHE_KEY, JSON.stringify(payload));
-  } catch {
-    /* quota — ignore */
-  }
-}
-
 /**
- * Get the keyword map, using cache if fresh.
+ * Fetch the keyword map fresh from the wiki on every call.
  * Returns whatever is available — never throws (resolves with {} on failure).
  */
 export async function loadKeywordMap(): Promise<KeywordMap> {
-  const cached = readCache();
-  if (cached) return cached;
   try {
     const titles = await fetchKeywordTitles();
     if (titles.length === 0) return {};
-    const data = await fetchExtracts(titles);
-    if (Object.keys(data).length > 0) writeCache(data);
-    return data;
+    return await fetchExtracts(titles);
   } catch {
     return {};
   }
