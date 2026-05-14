@@ -1,18 +1,11 @@
 import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import * as React from 'react';
 import { fetchCollectibleCards } from './api';
+import { buildIndex, query, type CardIndex } from './cardIndex';
 import { CardGrid } from './CardGrid';
-import {
-  CLASSES,
-  classesOf,
-  isBattlegrounds,
-  isConstructed,
-  isMercenaries,
-  isStandard,
-  isWild,
-} from './cardUtils';
+import { CLASSES, isStandard, isWild } from './cardUtils';
 import { ownedStore } from './ownedStore';
-import type { GameMode, FormatFilter, OwnedMap, RawCard } from './types';
+import type { GameMode, FormatFilter, OwnedMap } from './types';
 import { useLocalStorage } from './useLocalStorage';
 
 type Tab = 'all' | 'owned';
@@ -31,15 +24,73 @@ function OwnedCount({ render }: { render: (n: number) => React.ReactNode }) {
   return <>{render(n)}</>;
 }
 
+/** Action buttons whose disabled state depends on owned count.
+ *  Isolated so the parent App doesn't re-render on every +/- click. */
+function OwnedActions({
+  loading,
+  copied,
+  onCopy,
+  onDownload,
+  onImport,
+  onClear,
+}: {
+  loading: boolean;
+  copied: boolean;
+  onCopy: () => void;
+  onDownload: () => void;
+  onImport: (file: File) => void;
+  onClear: () => void;
+}) {
+  const owned = useSyncExternalStore(
+    ownedStore.subscribeSummary,
+    ownedStore.getAll,
+    ownedStore.getAll,
+  );
+  const total = useMemo(
+    () => Object.values(owned).reduce((s, v) => s + (v || 0), 0),
+    [owned],
+  );
+  const empty = total === 0;
+  return (
+    <>
+      <button className="btn" onClick={onCopy} disabled={loading || empty}>
+        {copied ? '✓ Copied' : 'Copy Owned JSON'}
+      </button>
+      <button className="btn" onClick={onDownload} disabled={loading || empty}>
+        Download
+      </button>
+      <label
+        className={`btn cursor-pointer ${loading ? 'opacity-50 pointer-events-none' : ''}`}
+      >
+        Import
+        <input
+          type="file"
+          accept="application/json,.json"
+          className="hidden"
+          disabled={loading}
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (f) onImport(f);
+            e.target.value = '';
+          }}
+        />
+      </label>
+      <button className="btn-pink" onClick={onClear} disabled={loading || empty}>
+        Clear
+      </button>
+    </>
+  );
+}
+
 const COST_BUCKETS = [
-  { label: '0', test: (n: number) => n === 0 },
-  { label: '1', test: (n: number) => n === 1 },
-  { label: '2', test: (n: number) => n === 2 },
-  { label: '3', test: (n: number) => n === 3 },
-  { label: '4', test: (n: number) => n === 4 },
-  { label: '5', test: (n: number) => n === 5 },
-  { label: '6', test: (n: number) => n === 6 },
-  { label: '7+', test: (n: number) => n >= 7 },
+  { label: '0' },
+  { label: '1' },
+  { label: '2' },
+  { label: '3' },
+  { label: '4' },
+  { label: '5' },
+  { label: '6' },
+  { label: '7+' },
 ] as const;
 
 function SkeletonCard() {
@@ -82,10 +133,11 @@ function useDebounced<T>(value: T, delay: number): T {
 }
 
 export default function App() {
-  const [cards, setCards] = useState<RawCard[] | null>(null);
+  const [index, setIndex] = useState<CardIndex | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>('all');
-  const loading = !cards && !error;
+  const loading = !index && !error;
+  const cards = index?.sortedCards ?? null;
 
   // Filters
   const [gameMode, setGameMode] = useLocalStorage<GameMode>('flt.mode', 'CONSTRUCTED');
@@ -98,57 +150,24 @@ export default function App() {
 
   useEffect(() => {
     fetchCollectibleCards()
-      .then((raw) => {
-        setCards(
-          [...raw].sort(
-            (a, b) =>
-              (a.cost ?? 0) - (b.cost ?? 0) || a.name.localeCompare(b.name),
-          ),
-        );
-      })
+      .then((raw) => setIndex(buildIndex(raw)))
       .catch((e) => setError(String(e)));
   }, []);
 
-  const debouncedSearch = useDebounced(search, 250);
+  const debouncedSearch = useDebounced(search, 200);
 
-  /** Base filter — does NOT depend on `owned`, so toggling +/- doesn't
-   *  re-scan all 7935 cards. */
+  /** Filtered list — uses inverted-index intersection + FlexSearch.
+   *  Independent of `owned`, so +/- toggles never re-run this. */
   const baseFiltered = useMemo(() => {
-    if (!cards) return [];
-    const term = debouncedSearch.trim().toLowerCase();
-
-    return cards.filter((c) => {
-      if (gameMode === 'CONSTRUCTED') {
-        if (!isConstructed(c)) return false;
-      } else if (gameMode === 'BATTLEGROUNDS') {
-        if (!isBattlegrounds(c)) return false;
-      } else if (gameMode === 'MERCENARIES') {
-        if (!isMercenaries(c)) return false;
-      }
-
-      if (gameMode === 'CONSTRUCTED' && formatF !== 'BOTH') {
-        if (formatF === 'STANDARD' && !isStandard(c)) return false;
-        if (formatF === 'WILD' && !isWild(c)) return false;
-      }
-
-      if (klass !== 'ALL') {
-        const cs = classesOf(c);
-        if (!cs.includes(klass)) return false;
-      }
-
-      if (cost !== 'ALL') {
-        const bucket = COST_BUCKETS.find((b) => b.label === cost);
-        if (bucket && !bucket.test(c.cost ?? 0)) return false;
-      }
-
-      if (term) {
-        const hay = `${c.name} ${c.text ?? ''} ${(c.mechanics ?? []).join(' ')}`.toLowerCase();
-        if (!hay.includes(term)) return false;
-      }
-
-      return true;
+    if (!index) return [];
+    return query(index, {
+      gameMode,
+      formatF,
+      klass,
+      cost,
+      search: debouncedSearch,
     });
-  }, [cards, gameMode, formatF, klass, cost, debouncedSearch]);
+  }, [index, gameMode, formatF, klass, cost, debouncedSearch]);
 
   const buildExportArray = () => {
     if (!cards) return [];
@@ -278,31 +297,14 @@ export default function App() {
           )}
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          <button className="btn" onClick={copyOwned} disabled={loading}>
-            {copied ? '✓ Copied' : 'Copy Owned JSON'}
-          </button>
-          <button className="btn" onClick={downloadJson} disabled={loading}>
-            Download
-          </button>
-          <label
-            className={`btn cursor-pointer ${loading ? 'opacity-50 pointer-events-none' : ''}`}
-          >
-            Import
-            <input
-              type="file"
-              accept="application/json,.json"
-              className="hidden"
-              disabled={loading}
-              onChange={(e) => {
-                const f = e.target.files?.[0];
-                if (f) void importJson(f);
-                e.target.value = '';
-              }}
-            />
-          </label>
-          <button className="btn-pink" onClick={clearAll} disabled={loading}>
-            Clear
-          </button>
+          <OwnedActions
+            loading={loading}
+            copied={copied}
+            onCopy={copyOwned}
+            onDownload={downloadJson}
+            onImport={importJson}
+            onClear={clearAll}
+          />
         </div>
       </div>
 
