@@ -156,17 +156,23 @@ export default function App() {
       .catch((e) => setError(String(e)));
   }, []);
 
-  // Load keyword glossary in parallel — non-blocking. Failure is silent: the
-  // export will simply omit `keywordDefinitions` rather than break.
+  // Load keyword glossary AFTER cards are loaded (so we know which mechanics
+  // actually appear) — non-blocking. Failure is silent: the export simply
+  // omits `keywordDefinitions` rather than break.
   useEffect(() => {
+    if (!cards) return;
     let cancelled = false;
-    loadKeywordMap().then((m) => {
+    const mechanics = new Set<string>();
+    for (const c of cards) {
+      if (c.mechanics) for (const m of c.mechanics) mechanics.add(m);
+    }
+    loadKeywordMap(mechanics).then((m) => {
       if (!cancelled) setKeywordMap(m);
     });
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [cards]);
 
   const debouncedSearch = useDebounced(search, 200);
 
