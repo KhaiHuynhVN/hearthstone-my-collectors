@@ -86,6 +86,13 @@ body::before {
   100% { transform: translateX(200%); }
 }
 
+/* Off-screen card tiles skip layout/paint until near viewport.
+ * Massive perf win when rendering 7k cards in a single grid. */
+.cv-auto {
+  content-visibility: auto;
+  contain-intrinsic-size: 320px;
+}
+
 /* Card flicker on hover */
 .card-glow:hover {
   box-shadow:

@@ -1,17 +1,14 @@
-import { useEffect, useMemo, useState } from 'react';
-import { fetchCollectibleCards, cardImageUrl, cardTileUrl } from './api';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { fetchCollectibleCards } from './api';
+import { CardTile } from './CardTile';
 import {
   CLASSES,
-  CLASS_COLORS,
-  RARITY_COLORS,
   classesOf,
-  dedupeReprints,
   isBattlegrounds,
   isConstructed,
   isMercenaries,
   isStandard,
   isWild,
-  maxQty,
 } from './cardUtils';
 import type { GameMode, FormatFilter, OwnedMap, RawCard } from './types';
 import { useLocalStorage } from './useLocalStorage';
@@ -28,10 +25,6 @@ const COST_BUCKETS = [
   { label: '6', test: (n: number) => n === 6 },
   { label: '7+', test: (n: number) => n >= 7 },
 ] as const;
-
-function classColor(cs: string[]): string {
-  return CLASS_COLORS[cs[0]] ?? '#9aa0b4';
-}
 
 function SkeletonCard() {
   return (
@@ -62,97 +55,14 @@ function SkeletonCard() {
   );
 }
 
-function CardTile({
-  card,
-  qty,
-  onChange,
-}: {
-  card: RawCard;
-  qty: number;
-  onChange: (q: number) => void;
-}) {
-  const [imgOk, setImgOk] = useState(true);
-  const cs = classesOf(card);
-  const max = maxQty(card);
-
-  return (
-    <div
-      className="panel card-glow relative p-2 flex flex-col gap-2 transition-transform hover:-translate-y-0.5"
-      style={{ borderColor: qty > 0 ? '#00f0ff' : undefined, boxShadow: qty > 0 ? '0 0 0 1px #00f0ff66, 0 0 18px #00f0ff33' : undefined }}
-    >
-      <div className="relative aspect-[3/4] flex items-center justify-center bg-cyber-bg/60 rounded overflow-hidden">
-        {imgOk ? (
-          <img
-            src={cardImageUrl(card.id)}
-            loading="lazy"
-            alt={card.name}
-            className="max-w-full max-h-full"
-            onError={() => setImgOk(false)}
-          />
-        ) : (
-          <img
-            src={cardTileUrl(card.id)}
-            loading="lazy"
-            alt={card.name}
-            className="w-full"
-          />
-        )}
-        <span
-          className="absolute top-1 left-1 pill"
-          style={{
-            background: '#0d0d22cc',
-            color: '#fff',
-            border: '1px solid #00f0ff80',
-          }}
-        >
-          {card.cost ?? 0}
-        </span>
-        <span
-          className="absolute top-1 right-1 pill"
-          style={{
-            background: '#0d0d22cc',
-            color: RARITY_COLORS[card.rarity ?? 'COMMON'] ?? '#fff',
-            border: `1px solid ${RARITY_COLORS[card.rarity ?? 'COMMON'] ?? '#fff'}80`,
-          }}
-        >
-          {(card.rarity ?? '').slice(0, 1)}
-        </span>
-      </div>
-      <div className="text-xs">
-        <div
-          className="font-display font-bold truncate"
-          title={card.name}
-          style={{ color: classColor(cs) }}
-        >
-          {card.name}
-        </div>
-        <div className="text-cyber-mute truncate">
-          {cs.join(' / ')} • {card.type}
-        </div>
-      </div>
-      <div className="flex items-center justify-between">
-        <span className="text-[10px] uppercase tracking-wider text-cyber-mute">
-          {qty}/{max}
-        </span>
-        <div className="flex gap-1">
-          <button
-            className="btn !px-2 !py-0.5 !text-xs"
-            disabled={qty <= 0}
-            onClick={() => onChange(Math.max(0, qty - 1))}
-          >
-            −
-          </button>
-          <button
-            className="btn-pink !px-2 !py-0.5 !text-xs"
-            disabled={qty >= max}
-            onClick={() => onChange(Math.min(max, qty + 1))}
-          >
-            +
-          </button>
-        </div>
-      </div>
-    </div>
-  );
+/** Debounce a value by `delay` ms (no extra deps). */
+function useDebounced<T>(value: T, delay: number): T {
+  const [v, setV] = useState(value);
+  useEffect(() => {
+    const id = setTimeout(() => setV(value), delay);
+    return () => clearTimeout(id);
+  }, [value, delay]);
+  return v;
 }
 
 export default function App() {
@@ -175,36 +85,21 @@ export default function App() {
   useEffect(() => {
     fetchCollectibleCards()
       .then((raw) => {
-        const { canonical, aliasOf } = dedupeReprints(raw);
-        // Migrate localStorage entries pointing at deduped reprints onto canonical.
-        setOwned((prev) => {
-          let mutated = false;
-          const next: OwnedMap = {};
-          for (const [dbfStr, qty] of Object.entries(prev)) {
-            const dbf = Number(dbfStr);
-            const target = aliasOf[dbf] ?? dbf;
-            if (target !== dbf) mutated = true;
-            const cap = canonical.find((c) => c.dbfId === target);
-            const max = cap ? maxQty(cap) : 2;
-            const merged = Math.min(max, (next[String(target)] ?? 0) + qty);
-            next[String(target)] = merged;
-          }
-          return mutated ? next : prev;
-        });
         setCards(
-          [...canonical].sort(
+          [...raw].sort(
             (a, b) =>
               (a.cost ?? 0) - (b.cost ?? 0) || a.name.localeCompare(b.name),
           ),
         );
       })
       .catch((e) => setError(String(e)));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const debouncedSearch = useDebounced(search, 250);
 
   const filtered = useMemo(() => {
     if (!cards) return [];
-    const term = search.trim().toLowerCase();
+    const term = debouncedSearch.trim().toLowerCase();
 
     return cards.filter((c) => {
       // Game mode
@@ -248,21 +143,24 @@ export default function App() {
 
       return true;
     });
-  }, [cards, gameMode, formatF, klass, cost, search, tab, owned]);
+  }, [cards, gameMode, formatF, klass, cost, debouncedSearch, tab, owned]);
 
   const totalOwned = useMemo(
     () => Object.values(owned).reduce((s, v) => s + (v || 0), 0),
     [owned],
   );
 
-  const setQty = (dbfId: number, q: number) => {
-    setOwned((prev) => {
-      const next = { ...prev };
-      if (q <= 0) delete next[String(dbfId)];
-      else next[String(dbfId)] = q;
-      return next;
-    });
-  };
+  const setQty = useCallback(
+    (dbfId: number, q: number) => {
+      setOwned((prev) => {
+        const next = { ...prev };
+        if (q <= 0) delete next[String(dbfId)];
+        else next[String(dbfId)] = q;
+        return next;
+      });
+    },
+    [setOwned],
+  );
 
   const buildExportArray = () => {
     if (!cards) return [];
@@ -545,7 +443,7 @@ export default function App() {
               key={c.id}
               card={c}
               qty={owned[String(c.dbfId)] ?? 0}
-              onChange={(q) => setQty(c.dbfId, q)}
+              onChange={setQty}
             />
           ))}
           {filtered.length === 0 && (
