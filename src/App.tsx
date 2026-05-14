@@ -208,57 +208,171 @@ export default function App() {
     });
   }, [index, gameMode, formatF, klass, cost, debouncedSearch]);
 
+  /**
+   * Ultra-compact export. The structure is:
+   *   {
+   *     $schema:  "ultra-v1",
+   *     $cols:    [<column names in order>],
+   *     $dict:    { cls: [...], typ: [...], ... } — enum values are emitted
+   *               once and referenced by index inside each row.
+   *     cards:    [[<row>], [<row>], ...]  — one positional array per card.
+   *     keywords: { TAG: "definition", ... } — same dedupe as before.
+   *   }
+   *
+   * Compared to the verbose object format this drops ~75-90% of bytes by
+   *  - removing per-row keys (columnar instead),
+   *  - factoring enums (class/type/rarity/race/spellSchool/format) into
+   *    a top-level dictionary,
+   *  - stripping useless fields (id, set, isMiniSet, elite, collectionText,
+   *    multiClassGroup, default quantity etc.),
+   *  - stripping HTML markers from rules text (<b>, [x] prefix, etc.).
+   */
   const buildExportPayload = () => {
-    if (!cards) return { cards: [], keywords: {} };
-    const map = ownedStore.getAll();
-    const ownedCards = cards.filter((c) => (map[String(c.dbfId)] ?? 0) > 0);
+    if (!cards) return { $schema: 'ultra-v1', $cols: [], $dict: {}, cards: [], keywords: {} };
+    const ownedMap = ownedStore.getAll();
+    const ownedCards = cards.filter((c) => (ownedMap[String(c.dbfId)] ?? 0) > 0);
 
-    const exportCards = ownedCards.map((c) => ({
-      dbfId: c.dbfId,
-      id: c.id,
-      name: c.name,
-      cardClass: c.cardClass,
-      classes: c.classes,
-      multiClassGroup: c.multiClassGroup,
-      cost: c.cost,
-      attack: c.attack,
-      health: c.health,
-      durability: c.durability,
-      armor: c.armor,
-      type: c.type,
-      rarity: c.rarity,
-      race: c.race,
-      races: c.races,
-      spellSchool: c.spellSchool,
-      spellDamage: c.spellDamage,
-      overload: c.overload,
-      runeCost: c.runeCost,
-      set: c.set,
-      format: isStandard(c) ? 'STANDARD' : isWild(c) ? 'WILD' : 'OTHER',
-      mechanics: c.mechanics,
-      referencedTags: c.referencedTags,
-      text: c.text,
-      collectionText: c.collectionText,
-      elite: c.elite,
-      isMiniSet: c.isMiniSet,
-      quantity: map[String(c.dbfId)] ?? 0,
-    }));
+    // Enum dictionaries — built up while emitting rows. We record each
+    // value's first index and reuse it.
+    const dictMaker = () => {
+      const arr: string[] = [];
+      const idx = new Map<string, number>();
+      const intern = (v: string | undefined | null): number | null => {
+        if (v == null) return null;
+        const got = idx.get(v);
+        if (got !== undefined) return got;
+        const i = arr.length;
+        idx.set(v, i);
+        arr.push(v);
+        return i;
+      };
+      return { arr, intern };
+    };
 
-    // Top-level keyword glossary — only entries that owned cards actually use,
-    // looked up once instead of duplicated on each card. Saves tokens when
-    // the AI consumes the JSON.
+    const cls = dictMaker();
+    const typ = dictMaker();
+    const rar = dictMaker();
+    const rce = dictMaker();
+    const spl = dictMaker();
+    const fmt = dictMaker();
+
+    const stripText = (raw: string | undefined): string | null => {
+      if (!raw) return null;
+      return raw
+        .replace(/<\/?b>/g, '')      // bold markers — keyword visibility
+        .replace(/\[x\]/g, '')       // typesetting hint
+        .replace(/\$/g, '')          // spell damage marker
+        .replace(/#/g, '')           // healing marker
+        .replace(/\s+/g, ' ')        // collapse whitespace
+        .trim() || null;
+    };
+
+    /* eslint-disable @typescript-eslint/no-explicit-any */
+    const rows: any[][] = ownedCards.map((c) => {
+      // Class: array of indices for multi-class, single index otherwise.
+      let classCol: number | number[] | null = null;
+      if (c.classes && c.classes.length > 1) {
+        classCol = c.classes.map((x) => cls.intern(x)!);
+      } else if (c.classes && c.classes.length === 1) {
+        classCol = cls.intern(c.classes[0]);
+      } else if (c.cardClass) {
+        classCol = cls.intern(c.cardClass);
+      }
+
+      // Race: same idea.
+      let raceCol: number | number[] | null = null;
+      if (c.races && c.races.length > 1) {
+        raceCol = c.races.map((x) => rce.intern(x)!);
+      } else if (c.races && c.races.length === 1) {
+        raceCol = rce.intern(c.races[0]);
+      } else if (c.race) {
+        raceCol = rce.intern(c.race);
+      }
+
+      const qty = ownedMap[String(c.dbfId)] ?? 0;
+      const formatStr: 'STANDARD' | 'WILD' | 'OTHER' = isStandard(c)
+        ? 'STANDARD'
+        : isWild(c)
+          ? 'WILD'
+          : 'OTHER';
+      const rune = c.runeCost
+        ? [c.runeCost.blood, c.runeCost.frost, c.runeCost.unholy]
+        : null;
+
+      return [
+        c.name,                          // n
+        classCol,                         // cls
+        c.cost ?? null,                   // cost
+        c.attack ?? null,                 // atk
+        c.health ?? null,                 // hp
+        c.armor ?? null,                  // arm
+        c.durability ?? null,             // dur
+        typ.intern(c.type),               // typ
+        rar.intern(c.rarity),             // rar
+        raceCol,                          // race
+        spl.intern(c.spellSchool),        // spl
+        c.spellDamage ?? null,            // sd
+        c.overload ?? null,               // ovl
+        c.mechanics?.length ? c.mechanics : null,        // mech
+        c.referencedTags?.length ? c.referencedTags : null, // ref
+        stripText(c.text),                // txt
+        rune,                             // rune (B,F,U) for DK
+        fmt.intern(formatStr),            // fmt
+        qty === 2 ? 2 : null,             // qty: omit when 1 (the default)
+      ];
+    });
+    /* eslint-enable @typescript-eslint/no-explicit-any */
+
+    // Trim trailing nulls in each row (positional but we still need a header
+    // so AI knows which fields were truncated — it only reads up to row.length).
+    // Keep full length for predictability — the dictionary already gives us
+    // the win, trailing nulls are cheap (`,null,null` ~ 10 chars per row).
+
     const usedTags = new Set<string>();
     for (const c of ownedCards) {
       if (c.mechanics) for (const m of c.mechanics) usedTags.add(m);
       if (c.referencedTags) for (const t of c.referencedTags) usedTags.add(t);
     }
     const keywords: Record<string, string> = {};
-    for (const t of usedTags) {
+    for (const t of [...usedTags].sort()) {
       const def = keywordMap[t];
       if (def) keywords[t] = def;
     }
 
-    return { cards: exportCards, keywords };
+    return {
+      $schema: 'ultra-v1',
+      $cols: [
+        'name',
+        'class',     // index OR array of indices into $dict.cls
+        'cost',
+        'attack',
+        'health',
+        'armor',
+        'durability',
+        'type',      // index into $dict.typ
+        'rarity',    // index into $dict.rar
+        'race',      // index OR array of indices into $dict.rce
+        'spellSchool', // index into $dict.spl
+        'spellDamage',
+        'overload',
+        'mechanics',   // string[]
+        'referencedTags', // string[]
+        'text',
+        'runeCost',  // [blood, frost, unholy] or null (Death Knight only)
+        'format',    // index into $dict.fmt
+        'quantity',  // null = 1 (default), 2 = two copies
+      ],
+      $dict: {
+        class: cls.arr,
+        type: typ.arr,
+        rarity: rar.arr,
+        race: rce.arr,
+        spellSchool: spl.arr,
+        format: fmt.arr,
+      },
+      cards: rows,
+      keywords,
+    };
   };
 
   const copyOwned = async () => {
