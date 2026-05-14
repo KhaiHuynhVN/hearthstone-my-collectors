@@ -12,7 +12,7 @@
  *       only one extract per request even with `exlimit=max`.)
  */
 
-const CACHE_KEY = 'kw.cache.v2';
+const CACHE_KEY = 'kw.cache.v3';
 const CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
 const WIKI_ENDPOINT = 'https://hearthstone.wiki.gg/api.php';
@@ -47,38 +47,51 @@ function cleanExtract(raw: string): string {
   return firstPara.replace(/\s+/g, ' ').trim();
 }
 
-/** Phase 1 — list every page in Category:Keywords. */
+/** Wiki categories that together cover every keyword card text uses.
+ *  - Keywords: expansion-specific (Dredge, Excavate, ...)
+ *  - Evergreen keywords: Battlecry, Deathrattle, Taunt, Freeze, ...
+ *  - Abilities: lower-level mechanics (Enrage, Spell damage, ...) */
+const KEYWORD_CATEGORIES = [
+  'Category:Keywords',
+  'Category:Evergreen keywords',
+  'Category:Abilities',
+] as const;
+
+/** Phase 1 — list every page across all keyword categories. */
 async function fetchKeywordTitles(): Promise<string[]> {
-  const titles: string[] = [];
-  let cont: string | undefined;
+  const seen = new Set<string>();
 
-  for (let i = 0; i < 6; i++) {
-    const url = new URL(WIKI_ENDPOINT);
-    url.searchParams.set('action', 'query');
-    url.searchParams.set('list', 'categorymembers');
-    url.searchParams.set('cmtitle', 'Category:Keywords');
-    url.searchParams.set('cmlimit', 'max'); // 500 for anon
-    url.searchParams.set('format', 'json');
-    url.searchParams.set('formatversion', '2');
-    url.searchParams.set('origin', '*');
-    if (cont) url.searchParams.set('cmcontinue', cont);
+  for (const category of KEYWORD_CATEGORIES) {
+    let cont: string | undefined;
+    for (let i = 0; i < 6; i++) {
+      const url = new URL(WIKI_ENDPOINT);
+      url.searchParams.set('action', 'query');
+      url.searchParams.set('list', 'categorymembers');
+      url.searchParams.set('cmtitle', category);
+      url.searchParams.set('cmlimit', 'max'); // 500 for anon
+      url.searchParams.set('cmnamespace', '0'); // main pages only
+      url.searchParams.set('format', 'json');
+      url.searchParams.set('formatversion', '2');
+      url.searchParams.set('origin', '*');
+      if (cont) url.searchParams.set('cmcontinue', cont);
 
-    const r = await fetch(url.toString());
-    if (!r.ok) throw new Error(`wiki list ${r.status}`);
-    const json = (await r.json()) as {
-      query?: { categorymembers?: MwTitlePage[] };
-      continue?: { cmcontinue?: string };
-    };
+      const r = await fetch(url.toString());
+      if (!r.ok) throw new Error(`wiki list ${r.status}`);
+      const json = (await r.json()) as {
+        query?: { categorymembers?: MwTitlePage[] };
+        continue?: { cmcontinue?: string };
+      };
 
-    for (const m of json.query?.categorymembers ?? []) {
-      // Skip subpages like "Battlegrounds/Battlecry" — keep canonical only.
-      if (m.title && !m.title.includes('/')) titles.push(m.title);
+      for (const m of json.query?.categorymembers ?? []) {
+        // Skip subpages like "Battlegrounds/Battlecry" — keep canonical only.
+        if (m.title && !m.title.includes('/')) seen.add(m.title);
+      }
+      cont = json.continue?.cmcontinue;
+      if (!cont) break;
     }
-    cont = json.continue?.cmcontinue;
-    if (!cont) break;
   }
 
-  return titles;
+  return [...seen];
 }
 
 /** Phase 2 — fetch intro extracts for a list of titles in batches. */
