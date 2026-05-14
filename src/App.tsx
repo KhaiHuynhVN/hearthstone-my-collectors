@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import { fetchCollectibleCards } from './api';
 import { CardTile } from './CardTile';
 import {
@@ -10,6 +10,7 @@ import {
   isStandard,
   isWild,
 } from './cardUtils';
+import { ownedStore } from './ownedStore';
 import type { GameMode, FormatFilter, OwnedMap, RawCard } from './types';
 import { useLocalStorage } from './useLocalStorage';
 
@@ -65,6 +66,16 @@ function useDebounced<T>(value: T, delay: number): T {
   return v;
 }
 
+/** Subscribes to the summary channel only. Returns the (referentially fresh)
+ *  owned map snapshot — used for total counter, owned-tab filtering, exports. */
+function useOwnedMap(): OwnedMap {
+  return useSyncExternalStore(
+    ownedStore.subscribeSummary,
+    ownedStore.getAll,
+    ownedStore.getAll,
+  );
+}
+
 export default function App() {
   const [cards, setCards] = useState<RawCard[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -78,8 +89,7 @@ export default function App() {
   const [cost, setCost] = useLocalStorage<string>('flt.cost', 'ALL');
   const [search, setSearch] = useLocalStorage<string>('flt.search', '');
 
-  // Collection
-  const [owned, setOwned] = useLocalStorage<OwnedMap>('owned.v1', {});
+  const owned = useOwnedMap();
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
@@ -104,7 +114,6 @@ export default function App() {
     const term = debouncedSearch.trim().toLowerCase();
 
     return cards.filter((c) => {
-      // Game mode
       if (gameMode === 'CONSTRUCTED') {
         if (!isConstructed(c)) return false;
       } else if (gameMode === 'BATTLEGROUNDS') {
@@ -112,27 +121,22 @@ export default function App() {
       } else if (gameMode === 'MERCENARIES') {
         if (!isMercenaries(c)) return false;
       }
-      // ALL: no filtering by mode
 
-      // Format (only meaningful for Constructed)
       if (gameMode === 'CONSTRUCTED' && formatF !== 'BOTH') {
         if (formatF === 'STANDARD' && !isStandard(c)) return false;
         if (formatF === 'WILD' && !isWild(c)) return false;
       }
 
-      // Class
       if (klass !== 'ALL') {
         const cs = classesOf(c);
         if (!cs.includes(klass)) return false;
       }
 
-      // Cost
       if (cost !== 'ALL') {
         const bucket = COST_BUCKETS.find((b) => b.label === cost);
         if (bucket && !bucket.test(c.cost ?? 0)) return false;
       }
 
-      // Search
       if (term) {
         const hay = `${c.name} ${c.text ?? ''} ${(c.mechanics ?? []).join(' ')}`.toLowerCase();
         if (!hay.includes(term)) return false;
@@ -142,8 +146,7 @@ export default function App() {
     });
   }, [cards, gameMode, formatF, klass, cost, debouncedSearch]);
 
-  /** Apply the "Owned" tab filter as a thin second pass on the already-filtered
-   *  subset. Owned changes only re-run this short loop, not the full 7935. */
+  /** Owned-tab filter is a thin second pass on the already-filtered subset. */
   const filtered = useMemo(() => {
     if (tab !== 'owned') return baseFiltered;
     return baseFiltered.filter((c) => (owned[String(c.dbfId)] ?? 0) > 0);
@@ -154,22 +157,11 @@ export default function App() {
     [owned],
   );
 
-  const setQty = useCallback(
-    (dbfId: number, q: number) => {
-      setOwned((prev) => {
-        const next = { ...prev };
-        if (q <= 0) delete next[String(dbfId)];
-        else next[String(dbfId)] = q;
-        return next;
-      });
-    },
-    [setOwned],
-  );
-
-  const buildExportArray = () => {
+  const buildExportArray = useCallback(() => {
     if (!cards) return [];
+    const map = ownedStore.getAll();
     return cards
-      .filter((c) => (owned[String(c.dbfId)] ?? 0) > 0)
+      .filter((c) => (map[String(c.dbfId)] ?? 0) > 0)
       .map((c) => ({
         dbfId: c.dbfId,
         id: c.id,
@@ -198,9 +190,9 @@ export default function App() {
         collectionText: c.collectionText,
         elite: c.elite,
         isMiniSet: c.isMiniSet,
-        quantity: owned[String(c.dbfId)] ?? 0,
+        quantity: map[String(c.dbfId)] ?? 0,
       }));
-  };
+  }, [cards]);
 
   const copyOwned = async () => {
     const arr = buildExportArray();
@@ -209,7 +201,6 @@ export default function App() {
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
     } catch {
-      // Fallback
       const ta = document.createElement('textarea');
       ta.value = JSON.stringify(arr, null, 2);
       document.body.appendChild(ta);
@@ -242,14 +233,14 @@ export default function App() {
           next[String(it.dbfId)] = it.quantity;
         }
       }
-      setOwned(next);
+      ownedStore.replace(next);
     } catch (e) {
       alert('Invalid JSON file: ' + e);
     }
   };
 
   const clearAll = () => {
-    if (confirm('Clear your entire owned collection?')) setOwned({});
+    if (confirm('Clear your entire owned collection?')) ownedStore.replace({});
   };
 
   return (
@@ -422,7 +413,6 @@ export default function App() {
         </label>
       </fieldset>
 
-      {/* Body */}
       {error && (
         <div className="panel p-4 text-cyber-pink">Failed to load cards: {error}</div>
       )}
@@ -443,12 +433,7 @@ export default function App() {
       {cards && !loading && (
         <div className="grid gap-3 grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
           {filtered.map((c) => (
-            <CardTile
-              key={c.id}
-              card={c}
-              qty={owned[String(c.dbfId)] ?? 0}
-              onChange={setQty}
-            />
+            <CardTile key={c.id} card={c} />
           ))}
           {filtered.length === 0 && (
             <div className="col-span-full panel p-8 text-center text-cyber-mute">

@@ -1,6 +1,7 @@
-import { memo, useState } from 'react';
+import { memo, useCallback, useState, useSyncExternalStore } from 'react';
 import { cardImageUrl, cardTileUrl } from './api';
 import { CLASS_COLORS, RARITY_COLORS, classesOf, maxQty } from './cardUtils';
+import { ownedStore } from './ownedStore';
 import type { RawCard } from './types';
 
 function classColor(cs: string[]): string {
@@ -9,11 +10,19 @@ function classColor(cs: string[]): string {
 
 interface Props {
   card: RawCard;
-  qty: number;
-  onChange: (dbfId: number, q: number) => void;
 }
 
-function CardTileImpl({ card, qty, onChange }: Props) {
+function CardTileImpl({ card }: Props) {
+  const dbfId = card.dbfId;
+
+  // Per-card subscription: only this tile re-renders when its qty changes.
+  const subscribe = useCallback(
+    (cb: () => void) => ownedStore.subscribeKey(dbfId, cb),
+    [dbfId],
+  );
+  const getSnapshot = useCallback(() => ownedStore.get(dbfId), [dbfId]);
+  const qty = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+
   const [imgOk, setImgOk] = useState(true);
   const cs = classesOf(card);
   const max = maxQty(card);
@@ -89,14 +98,14 @@ function CardTileImpl({ card, qty, onChange }: Props) {
           <button
             className="btn !px-2 !py-0.5 !text-xs"
             disabled={qty <= 0}
-            onClick={() => onChange(card.dbfId, Math.max(0, qty - 1))}
+            onClick={() => ownedStore.set(dbfId, Math.max(0, qty - 1))}
           >
             −
           </button>
           <button
             className="btn-pink !px-2 !py-0.5 !text-xs"
             disabled={qty >= max}
-            onClick={() => onChange(card.dbfId, Math.min(max, qty + 1))}
+            onClick={() => ownedStore.set(dbfId, Math.min(max, qty + 1))}
           >
             +
           </button>
@@ -106,7 +115,5 @@ function CardTileImpl({ card, qty, onChange }: Props) {
   );
 }
 
-/** Memo: only re-render when this card's qty actually changes. */
-export const CardTile = memo(CardTileImpl, (a, b) => {
-  return a.qty === b.qty && a.card.dbfId === b.card.dbfId && a.onChange === b.onChange;
-});
+/** Memo on card identity only — qty is read from the store. */
+export const CardTile = memo(CardTileImpl, (a, b) => a.card.dbfId === b.card.dbfId);
