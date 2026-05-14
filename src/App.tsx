@@ -4,6 +4,7 @@ import { fetchCollectibleCards } from './api';
 import { buildIndex, query, type CardIndex } from './cardIndex';
 import { CardGrid } from './CardGrid';
 import { CLASSES, isStandard, isWild } from './cardUtils';
+import { loadKeywordMap, type KeywordMap } from './keywordsApi';
 import { ownedStore } from './ownedStore';
 import type { GameMode, FormatFilter, OwnedMap } from './types';
 import { useLocalStorage } from './useLocalStorage';
@@ -147,11 +148,24 @@ export default function App() {
   const [search, setSearch] = useLocalStorage<string>('flt.search', '');
 
   const [copied, setCopied] = useState(false);
+  const [keywordMap, setKeywordMap] = useState<KeywordMap>({});
 
   useEffect(() => {
     fetchCollectibleCards()
       .then((raw) => setIndex(buildIndex(raw)))
       .catch((e) => setError(String(e)));
+  }, []);
+
+  // Load keyword glossary in parallel — non-blocking. Failure is silent: the
+  // export will simply omit `keywordDefinitions` rather than break.
+  useEffect(() => {
+    let cancelled = false;
+    loadKeywordMap().then((m) => {
+      if (!cancelled) setKeywordMap(m);
+    });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const debouncedSearch = useDebounced(search, 200);
@@ -174,36 +188,49 @@ export default function App() {
     const map = ownedStore.getAll();
     return cards
       .filter((c) => (map[String(c.dbfId)] ?? 0) > 0)
-      .map((c) => ({
-        dbfId: c.dbfId,
-        id: c.id,
-        name: c.name,
-        cardClass: c.cardClass,
-        classes: c.classes,
-        multiClassGroup: c.multiClassGroup,
-        cost: c.cost,
-        attack: c.attack,
-        health: c.health,
-        durability: c.durability,
-        armor: c.armor,
-        type: c.type,
-        rarity: c.rarity,
-        race: c.race,
-        races: c.races,
-        spellSchool: c.spellSchool,
-        spellDamage: c.spellDamage,
-        overload: c.overload,
-        runeCost: c.runeCost,
-        set: c.set,
-        format: isStandard(c) ? 'STANDARD' : isWild(c) ? 'WILD' : 'OTHER',
-        mechanics: c.mechanics,
-        referencedTags: c.referencedTags,
-        text: c.text,
-        collectionText: c.collectionText,
-        elite: c.elite,
-        isMiniSet: c.isMiniSet,
-        quantity: map[String(c.dbfId)] ?? 0,
-      }));
+      .map((c) => {
+        const mechanics = c.mechanics;
+        let keywordDefinitions: Record<string, string> | undefined;
+        if (mechanics && mechanics.length && Object.keys(keywordMap).length) {
+          const defs: Record<string, string> = {};
+          for (const m of mechanics) {
+            const def = keywordMap[m];
+            if (def) defs[m] = def;
+          }
+          if (Object.keys(defs).length) keywordDefinitions = defs;
+        }
+        return {
+          dbfId: c.dbfId,
+          id: c.id,
+          name: c.name,
+          cardClass: c.cardClass,
+          classes: c.classes,
+          multiClassGroup: c.multiClassGroup,
+          cost: c.cost,
+          attack: c.attack,
+          health: c.health,
+          durability: c.durability,
+          armor: c.armor,
+          type: c.type,
+          rarity: c.rarity,
+          race: c.race,
+          races: c.races,
+          spellSchool: c.spellSchool,
+          spellDamage: c.spellDamage,
+          overload: c.overload,
+          runeCost: c.runeCost,
+          set: c.set,
+          format: isStandard(c) ? 'STANDARD' : isWild(c) ? 'WILD' : 'OTHER',
+          mechanics,
+          keywordDefinitions,
+          referencedTags: c.referencedTags,
+          text: c.text,
+          collectionText: c.collectionText,
+          elite: c.elite,
+          isMiniSet: c.isMiniSet,
+          quantity: map[String(c.dbfId)] ?? 0,
+        };
+      });
   };
 
   const copyOwned = async () => {
