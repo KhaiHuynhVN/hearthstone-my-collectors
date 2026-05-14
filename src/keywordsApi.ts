@@ -5,15 +5,20 @@
  * Free, no auth, CORS open via `origin=*`. Cached in localStorage with a
  * 7-day TTL — call site doesn't have to think about freshness.
  *
- * Output keys are normalized to match HearthstoneJSON's `mechanics` enum
- * (e.g. "BATTLECRY", "DIVINE_SHIELD", "CHOOSE_ONE") so they can be looked
- * up directly from a card's `mechanics` array.
+ * Two-phase fetch (a MediaWiki quirk):
+ *   1) list=categorymembers — get keyword page titles.
+ *   2) titles=...&prop=extracts — fetch extracts in batches of <=50.
+ *      (Combining `prop=extracts` with `generator=categorymembers` returns
+ *       only one extract per request even with `exlimit=max`.)
  */
 
-const CACHE_KEY = 'kw.cache.v1';
+const CACHE_KEY = 'kw.cache.v2';
 const CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
 const WIKI_ENDPOINT = 'https://hearthstone.wiki.gg/api.php';
+
+/** Anonymous users may request at most 50 titles per query. */
+const TITLE_BATCH = 50;
 
 export type KeywordMap = Record<string, string>;
 
@@ -22,18 +27,13 @@ interface CacheShape {
   data: KeywordMap;
 }
 
-interface MwPage {
-  pageid: number;
-  ns: number;
+interface MwTitlePage {
   title: string;
-  extract?: string;
 }
 
-interface MwResponse {
-  query?: {
-    pages?: Record<string, MwPage>;
-  };
-  continue?: { gcmcontinue?: string; continue?: string };
+interface MwExtractPage {
+  title: string;
+  extract?: string;
 }
 
 /** Convert wiki page title ("Divine Shield") to mechanics enum ("DIVINE_SHIELD"). */
@@ -41,54 +41,73 @@ function titleToMechanicKey(title: string): string {
   return title.trim().toUpperCase().replace(/[\s-]+/g, '_');
 }
 
-/** Trim wiki extract to a tight one- or two-sentence description. */
+/** Trim wiki extract to a tight one-paragraph description. */
 function cleanExtract(raw: string): string {
-  // MediaWiki sometimes returns multi-paragraph extracts; first paragraph is plenty.
   const firstPara = raw.split(/\n\s*\n/)[0] ?? raw;
-  // Collapse internal whitespace.
   return firstPara.replace(/\s+/g, ' ').trim();
 }
 
-async function fetchAllKeywords(): Promise<KeywordMap> {
-  const map: KeywordMap = {};
+/** Phase 1 — list every page in Category:Keywords. */
+async function fetchKeywordTitles(): Promise<string[]> {
+  const titles: string[] = [];
   let cont: string | undefined;
 
-  // Paginate just in case the category exceeds one batch (limit=500 is plenty
-  // today, ~116 keywords, but future-proof anyway).
-  for (let i = 0; i < 5; i++) {
+  for (let i = 0; i < 6; i++) {
     const url = new URL(WIKI_ENDPOINT);
     url.searchParams.set('action', 'query');
-    url.searchParams.set('generator', 'categorymembers');
-    url.searchParams.set('gcmtitle', 'Category:Keywords');
-    url.searchParams.set('gcmlimit', '500');
+    url.searchParams.set('list', 'categorymembers');
+    url.searchParams.set('cmtitle', 'Category:Keywords');
+    url.searchParams.set('cmlimit', 'max'); // 500 for anon
+    url.searchParams.set('format', 'json');
+    url.searchParams.set('formatversion', '2');
+    url.searchParams.set('origin', '*');
+    if (cont) url.searchParams.set('cmcontinue', cont);
+
+    const r = await fetch(url.toString());
+    if (!r.ok) throw new Error(`wiki list ${r.status}`);
+    const json = (await r.json()) as {
+      query?: { categorymembers?: MwTitlePage[] };
+      continue?: { cmcontinue?: string };
+    };
+
+    for (const m of json.query?.categorymembers ?? []) {
+      // Skip subpages like "Battlegrounds/Battlecry" — keep canonical only.
+      if (m.title && !m.title.includes('/')) titles.push(m.title);
+    }
+    cont = json.continue?.cmcontinue;
+    if (!cont) break;
+  }
+
+  return titles;
+}
+
+/** Phase 2 — fetch intro extracts for a list of titles in batches. */
+async function fetchExtracts(titles: string[]): Promise<KeywordMap> {
+  const map: KeywordMap = {};
+
+  for (let i = 0; i < titles.length; i += TITLE_BATCH) {
+    const batch = titles.slice(i, i + TITLE_BATCH);
+    const url = new URL(WIKI_ENDPOINT);
+    url.searchParams.set('action', 'query');
+    url.searchParams.set('titles', batch.join('|'));
     url.searchParams.set('prop', 'extracts');
+    url.searchParams.set('exlimit', 'max');
     url.searchParams.set('exintro', '1');
     url.searchParams.set('explaintext', '1');
     url.searchParams.set('format', 'json');
     url.searchParams.set('formatversion', '2');
     url.searchParams.set('origin', '*');
-    if (cont) url.searchParams.set('gcmcontinue', cont);
 
     const r = await fetch(url.toString());
-    if (!r.ok) throw new Error(`wiki ${r.status}`);
-    const json = (await r.json()) as MwResponse & {
-      query?: { pages?: MwPage[] };
-    };
+    if (!r.ok) throw new Error(`wiki extracts ${r.status}`);
+    const json = (await r.json()) as { query?: { pages?: MwExtractPage[] } };
 
-    // formatversion=2 returns pages as an array.
-    const pages = (json.query?.pages ?? []) as MwPage[];
-    for (const p of pages) {
+    for (const p of json.query?.pages ?? []) {
       if (!p.title || !p.extract) continue;
-      // Skip mode-specific subpages like "Battlegrounds/Battlecry" — we only
-      // want canonical keyword pages whose title equals the keyword itself.
-      if (p.title.includes('/')) continue;
       const key = titleToMechanicKey(p.title);
       const def = cleanExtract(p.extract);
       if (def) map[key] = def;
     }
-
-    cont = json.continue?.gcmcontinue;
-    if (!cont) break;
   }
 
   return map;
@@ -129,7 +148,9 @@ export async function loadKeywordMap(): Promise<KeywordMap> {
   const cached = readCache();
   if (cached) return cached;
   try {
-    const data = await fetchAllKeywords();
+    const titles = await fetchKeywordTitles();
+    if (titles.length === 0) return {};
+    const data = await fetchExtracts(titles);
     if (Object.keys(data).length > 0) writeCache(data);
     return data;
   } catch {
