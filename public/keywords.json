@@ -1,9 +1,9 @@
 {
-  "generatedAt": "2026-11-23T23:34:51.671Z",
+  "generatedAt": "2026-11-24T09:01:19.783Z",
   "source": "https://hearthstone.wiki.gg",
   "cardSource": "https://api.hearthstonejson.com/v1/latest/enUS/cards.collectible.json",
   "totalTagsScanned": 74,
-  "totalKeywordsResolved": 64,
+  "totalKeywordsResolved": 65,
   "keywords": {
     "ADAPT": "For the Paladin spell Adaptation, see Adaptation.",
     "AFFECTED_BY_SPELL_POWER": "Spell Damage is an ability which boosts the overall damage of spells by the listed amount. Sources of Spell Damage are indicated by purple sparkles around their portaits.",
@@ -11,6 +11,7 @@
     "BATTLECRY": "Battlecry is an ability where a particular effect activates when the card with the Battlecry is played directly from the hand. Although mostly limited to minions, some weapons also have Battlecries. Activation of Battlecries are indicated by a flash of light from beneath the minion or weapon. Battlecries are and long have been the most common type of ability in Hearthstone, representing the simplest way for a minion to bring an additional effect into play, and featuring a large variety of different effects.",
     "CHARGE": "For the card of the same name, see Charge. Charge is an ability allowing a minion to attack the same turn it is summoned or brought under a new player's control. Charge is available to all classes, but is most strongly associated with the warrior, hunter, and demon hunter classes.",
     "CHOOSE_ONE": "Choose One is an ability which allows a player to choose one of multiple possible effects when the card is played from the hand. Cards with this ability are typically limited to the druid class, but may appear in other classes occasionally. Choose One effects are similar to Discover effects, and certain other cards such as Tracking, which also allow you to choose between multiple options.",
+    "COLLECTIONMANAGER_FILTER_MANA_EVEN": "For other uses of Genn Greymane, see Genn Greymane (disambiguation). Genn Greymane is a legendary neutral minion card, from The Witchwood set. It was once in the Hall of Fame set from April 4, 2019 to March 30, 2021.",
     "COLOSSAL": "Colossal is a mechanic introduced in Voyage to the Sunken City. Whenever a Colossal minion is summoned or transformed into, uncollectible minions called appendages are summoned alongside it. The number of appendages is stated after the plus (Colossal +4 means it summons 4 appendages).",
     "COMBO": "Combo is an ability where the stated effect occurs if the card is not the first one played from the hand during the turn. Cards with this ability are usually limited to the rogue class, but it may appear in other classes occasionally. The term \"combo\" is also often used to refer to a sequence of cards or actions which are unleashed in quick succession, with or without Combo effects.",
     "CORRUPT": "Corrupt is an ability introduced in Madness at the Darkmoon Faire which activates when the user plays a card with a higher mana cost than the Corrupt card's cost while in hand, causing it to transform into a Corrupted card and gain additional effects.",
